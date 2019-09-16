@@ -1,0 +1,709 @@
+<html>
+  <head>
+    <title>Island Generator</title>
+    <style>
+      body{
+        font-size: 16px;
+        font-family: sans-serif;
+        background-color:#008cf0;
+      }
+      p{
+        font-size:120%;
+      }
+      h1{
+        font-size:250%;
+      }
+      #main_cont{
+        /*border: 1px solid black;*/
+        margin: 0 auto;
+        margin-top: 100px;
+        width:500px;
+      }
+      #main{/*canvas*/
+        cursor:move;
+      }
+      #text_content li{
+        list-style-type: circle;
+      }
+      #text_content h1::selection,
+      #text_content p::selection, 
+      #text_content a::selection, 
+      #text_content li::selection {
+        color: #37E370;
+        background: #0077CC;
+      }
+      
+      @media (min-width: 1440px){
+        #main_cont{
+          width:1440px;
+        }
+        #canvas_cont{
+          text-align:center;
+        }
+        #text_content{
+          text-align: center;
+        }
+        #text_content > div{
+          display:inline-block;
+          width:450px;
+          vertical-align: top;
+          text-align:left;
+        }
+        #text_content h1{
+          text-align: center;
+        }
+      }
+    </style>
+  </head>
+<body onload="ex_rough()">
+  <div id='main_cont'>
+    <div id='canvas_cont'><canvas id='main' width=500 height=500></canvas></div>
+    <div id='text_content'>
+      <div id='text_details'>
+        <h1>Details</h1>
+        <p>The basic idea is create a regular polygon, move the vertices around a bit, and then keep splitting until the distance between 2 points is smaller than the request amount. Some extra metadata controls "roughness" of edges.</p>
+      </div>
+      <div id='text_variables'>
+        <h1>Variables</h1>
+        <ul>
+          <li>Radius - Initial radius of the regular polygon that gets created. Higher radius will generally result in more divisions</li>
+          <li>Sides - Initial number of sides of the regular polygon</li>
+          <li>Min_Dist - Distance that it will stop dividing at. Higher distance will result in "blockier" island</li>
+          <li>Land_Color - obvious</li>
+          <li>Ocean_Color - double obvious</li>
+        </ul>
+      </div>
+      <div id='text_source'>
+        <h1>Source</h1>
+        <p>Most of the code was taken from <a href='http://exupero.org/hazard/post/islands/'>here</a> and adapted from Clojure(?) to native JS. Controller GUI is from <a href='https://workshop.chromeexperiments.com/examples/gui/'>dat.gui</a>. </p>
+      </div>
+      
+    </div>
+  </div>
+</body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/2.4.0/seedrandom.min.js"></script>
+<!--<script type='text/javascript' src='https://cdn.rawgit.com/dataarts/dat.gui/a68384d49be42b1909d054ac4296aca7b3158c16/build/dat.gui.js'></script>-->
+  <script type=text/javascript src='dat.gui.min.js'></script>
+<script type='text/javascript'>
+  var cnv = document.getElementById('main');
+  var cnv_ctxt = cnv.getContext('2d');
+  
+  var translation_vector = [0,0];
+  cnv.addEventListener("mouseleave",function(){
+    canvasEventController.mouse("mouseup")//not a typo, trigger same behavior as next
+  });
+  cnv.addEventListener("mouseup",function(e){
+    canvasEventController.mouse("mouseup");
+  });
+  cnv.addEventListener("mousedown",function(e){
+    canvasEventController.mouse("mousedown",e);
+  });
+  cnv.addEventListener("mousemove",function(e){
+    canvasEventController.mouse("mousemove",e);
+    return false;
+  })
+  cnv.addEventListener("mousewheel",function(e){
+    canvasEventController.scroll(e);
+    e.preventDefault();
+  })
+  
+  //some global constants
+  var TAU = 2*Math.PI;
+  var WIDTH = 500, HEIGHT = 500;  
+
+  var options = {};//basic options & funcs for dat.gui
+  
+  /*DEFAULT OPTIONS, CHANGE THESE TO AFFECT THE REST*/
+  options._radius_default = 100;
+  options._radius_min = 10;
+  options._radius_max = 200;
+  
+  options._sides_default = 15;
+  options._sides_min = 3;
+  options._sides_max = 25;
+  
+  options._min_dist_default = 2;
+  options._min_dist_min = 0.02;
+  options._min_dist_max = 5;
+  
+  options._ocean_color_default = "#0077CC";
+  options._land_color_default = "#37E370";
+  
+  options.seed = 0;//doesn't really get used for anything, just here
+  options.radius = options._radius_default;
+  options.sides = options._sides_default;
+  options.min_dist = options._min_dist_default;
+  options.ocean_color = options._ocean_color_default;
+  options.land_color = options._land_color_default;
+  options.redraw = function(){
+    
+    Math.seedrandom(hashController.get("seed"));
+    ex_rough();
+  }
+  options.randomize = function(){
+    hashController.update("seed",Math.round(Math.random()*1e10));
+    Math.seedrandom(hashController.get("seed"));
+    canvasEventController.reset();
+    ex_rough();
+  }
+  options.reset_view = function(){
+    canvasEventController.reset();
+    renderer.redraw();
+  }
+  //for some reason, can't access constants in a function below, this is a cheap way of fixing
+  window.canvas_height = HEIGHT, window.canvas_width = WIDTH;
+ 
+  var hashController = (function(){
+    
+    var hash_state = {
+      seed: 0,
+      radius: options._radius_default,
+      sides: options._sides_default,
+      min_dist: options._min_dist_default,
+      land_color:options._land_color_default,
+      ocean_color:options._ocean_color_default
+      
+    }  
+    
+    
+    function detect_hash_change(){
+      console.log("checking hash");
+      console.log(hash_state);
+      var hash = window.location.hash.substr(1);
+      hash.split("&").forEach(function(v,i){
+        var t = v.split("=");
+        if(t.length!=2)return;
+        switch(t[0]){
+          case "seed":
+            hash_state['seed'] = t[1];
+            break;
+          case "radius":
+          case "sides":
+          case "min_dist":
+            if(is_within_range(t[0],t[1])){
+              hash_state[t[0]] = t[1];
+            }
+            break;
+          case "land_color":
+          case "ocean_color":
+            if(is_color(t[1])){
+              hash_state[t[0]] = t[1];
+            }
+          default:
+            return;
+            
+        }
+      });
+      console.log(hash_state);
+      
+      
+    }
+    
+    function is_color(col){
+      return /^#[0-9A-F]{6}$/i.test(col);
+    }
+    
+    function is_within_range(field,val){
+      var min = options["_"+field+"_min"],
+          max = options["_"+field+"_max"];
+      return val >= min && val <= max;
+    }
+    
+    function update_field(field,value){
+      hash_state[field] = value;
+      window.location.hash = form_hash_string();
+      
+    }
+    
+    function isDefault(field){
+      return hash_state[field]==options["_"+field+"_default"];
+    }
+    
+    function form_hash_string(){
+      var hs = hash_state;
+      var str = "";
+      str += "seed="+hs.seed;
+      str += isDefault("radius") ? "" : "&radius="+hs.radius;
+      str += isDefault("sides") ? "" : "&sides="+hs.sides;
+      str += isDefault("min_dist") ? "" : "&min_dist="+hs.min_dist;
+      str += isDefault("land_color") ? "" : "&land_color="+hs.land_color;
+      str += isDefault("ocean_color") ? "" : "&ocean_color="+hs.ocean_color;
+      return str;
+    }
+    
+    return {
+      update:function(field,value){
+        update_field(field,value);
+      },
+      get:function(field){
+        return hash_state[field];
+      },
+      initialize:function(){
+        detect_hash_change();
+      },
+      load_url:function(){
+        detect_hash_change();
+      },
+      for_each_field:function(cb){//http://stackoverflow.com/questions/7306669/
+        for(var key in hash_state){
+          if(Object.prototype.hasOwnProperty.call(hash_state,key)){
+            var val = hash_state[key],
+                type = 'c';//color
+            if(parseFloat(val,10) || parseInt(val,10)){
+              type = 'n';//number
+            }
+            cb(key,hash_state[key],type);
+          }
+        }
+      }
+      
+    };
+  })();
+  
+  var canvasEventController = (function(){
+    var mouse_down = false,
+        last_coords = [0,0],
+        scale = 1;
+        
+    function handle_drag(ev){
+      if(mouse_down){
+        
+        translation_vector = [
+          translation_vector[0] - (last_coords[0] - ev.x),
+          translation_vector[1] - (last_coords[1] - ev.y)
+        ];
+        last_coords = [ev.x, ev.y];
+        renderer.redraw(function(pt){
+          return [
+            scale*pt[0]+translation_vector[0],
+            scale*pt[1]+translation_vector[1]
+          ];
+        })
+      }
+    }
+    
+    return {
+      mouse:function(event_type,ev){
+            switch(event_type){
+            case "mouseup":
+              mouse_down = false;
+              break;
+            case "mousedown":
+              mouse_down = true;
+              last_coords[0] = ev.x;
+              last_coords[1] = ev.y;
+
+              break;
+            case "mousemove":
+              handle_drag(ev);
+              break;
+            default:
+              console.log("never");
+          }
+        },
+      scroll:function(e){
+        scale -= e.deltaY/1000;//100/10,1000 = 0.01
+        scale = Math.max(0.01,scale);
+        renderer.redraw(function(pt){
+          return [
+            scale*pt[0]+translation_vector[0],
+            scale*pt[1]+translation_vector[1]
+          ];
+        })
+      },
+      reset:function(){
+        scale = 1;
+        translation_vector = [0,0];
+        
+      }
+    }
+  })();
+  
+  
+  
+  function n_gon(radius, sides){
+    if(sides < 2)throw "too few sides";
+
+    var max_angle = TAU - 0.000001;
+    var inc = TAU / sides;
+    var pts = [];
+    for(var angle = 0; angle < max_angle; angle+= inc){
+      pts.push([
+        radius * Math.cos(angle),
+        radius * Math.sin(angle)
+      ]);
+
+    }
+    return pts;
+  }
+  
+  function irregular(pts){
+    return pts.map(function(pt){
+      var d_x = Math.random()+0.5,//[0.5,1.5)
+          d_y = Math.random()+0.5;
+      return [d_x * pt[0], d_y * pt[1]];
+    });
+    
+    
+  }
+  function irregular_n_gon(radius,sides){
+    return irregular(n_gon(radius,sides));
+  }
+  
+  function offset_midpoint(pt1, pt2){
+    var mx = (pt1[0] + pt2[0])/2,
+        my = (pt1[1] + pt2[1])/2,
+        vx = -(pt1[1] - pt2[1]),
+        vy = (pt1[0] - pt2[0]),
+        d = (Math.random()-0.5);
+    
+    return [
+      mx + (d * vx),
+      my + (d * vy)
+    ];
+    
+    
+  }
+  
+  function loop_around(pts){
+    var new_pts = pts.slice();
+    new_pts.push(pts[0]);
+    return new_pts;
+  }
+  //f is algo to get new point which takes 2 pts and returns new pt
+  //pred is condition to divide (distance in case we used)
+  function subdivide_with(f,pred,pts){
+    var partitioned = [];
+    for(var i = 0; i < pts.length-1; i++){
+      partitioned.push([
+        pts[i],pts[i+1]
+      ]);
+    }
+    return mapcat(
+      function(e){
+        if(pred(e[0],e[1])){
+          return subdivide_with(
+            f, 
+            pred, 
+            [ e[0], (f(e[0],e[1])), e[1] ]);
+        } else {
+          return [ e[0] ];
+        }
+        
+      },
+      partitioned
+    );
+    
+  }
+  
+  function dist(pt1,pt2){
+    return Math.sqrt( Math.pow(pt1[0]-pt2[0],2) + Math.pow(pt1[1] - pt2[1],2) );
+  }
+  
+  function mapcat(f,arr){
+    var ret = []
+    for(var i=0;i<arr.length;i++){
+      var t = f(arr[i]);
+      for(var j=0;j<t.length;j++)
+        ret.push(t[j]);
+    }
+      
+    return ret;
+  }
+  
+  
+   function subdivided_n_gon(pred, radius, sides){
+    return subdivide_with(
+      offset_midpoint,
+      pred,
+      loop_around(irregular_n_gon(radius,sides))
+    );
+  }
+  
+  function ex(){
+    var pts = 
+      subdivided_n_gon(
+        function(pt1,pt2){
+          return dist(pt1,pt2) > 2
+        },
+        50,
+        3
+      );
+      var new_pts = scale_and_translate(pts, function(lo,hi){
+          var x_ar,y_ar,ar;
+          return [
+                (x_ar = ((window.canvas_width*0.9) /(Math.abs(hi[0] - lo[0])))) < 
+                (y_ar = ((window.canvas_height*0.9)/(Math.abs(hi[1] - lo[1]))))
+                  ? ar = x_ar : ar = y_ar,
+                (hi[0]+lo[0])/2*ar,
+                (hi[1]+lo[1])/2*ar
+              ];
+        })
+      
+    render.draw(new_pts);
+  }
+  
+  function ex_rough(){
+    
+    var radius = options.radius,
+        sides = options.sides,
+        min_dist = options.min_dist;
+    
+    //document.body.style.backgroundColor = options.ocean_color;
+    
+    renderer.draw(
+      scale_and_translate(
+        subdivide_with(
+          offset_midpoint_rough,
+          function(pt1,pt2){
+            return dist(pt1,pt2) > min_dist
+          },
+          loop_around(
+            irregular_n_gon(radius,sides ).map(with_roughness)
+          )
+          
+        ),
+        function(lo,hi){
+          var x_ar,y_ar,ar;
+          return [
+                (x_ar = ((window.canvas_width*0.9) /(Math.abs(hi[0] - lo[0])))) < 
+                (y_ar = ((window.canvas_height*0.9)/(Math.abs(hi[1] - lo[1]))))
+                  ? ar = x_ar : ar = y_ar,
+                (hi[0]+lo[0])/2*ar,
+                (hi[1]+lo[1])/2*ar
+              ];
+        }
+      )
+      
+    );
+    
+  }
+  
+  //take points and a function that returns scale factors and return new points
+  //f returns 3-val array, a scale(0) for both x,y and then a translation vector (1,2)
+  //f is called with 2 2-val array(x=0,y=1) with first arr being lowest points, other being highest
+  function scale_and_translate(pts, f){
+    
+    
+    //scale,x_tr,y_tr
+    var factors = f(
+      [
+        pts.reduce(function(prev,curr){
+          return prev[0] < curr[0] ? prev : curr;
+        })[0],
+        pts.reduce(function(prev,curr){
+          return prev[1] < curr[1] ? prev : curr;
+        })[1]
+      ],
+      [
+        pts.reduce(function(prev,curr){
+          return prev[0] > curr[0] ? prev : curr;
+        })[0],
+        pts.reduce(function(prev,curr){
+          return prev[1] > curr[1] ? prev : curr;
+        })[1]
+      ]
+    );
+    return pts.map(function(pt){
+      return [
+          pt[0]*factors[0]-factors[1],
+          pt[1]*factors[0]-factors[2]
+        ];
+    });
+  }
+  
+
+ 
+  function roughened_ngon(radius,sides){
+    return irregular_n_gon(radius,sides ).map(with_roughness);
+    
+  }
+  
+  /*
+  I would probably create a probability table that describes how many times
+  out of a hundred the player will get say 1-10 coins, 11-50.. etc. at that
+  level. Then you create a random number between 1 and 100 so you get your
+  range, then you can get another random number
+  that specifies the exact amount.
+  https://forums.tigsource.com/index.php?topic=13247.0
+  */
+  function roughness_rng_to_x_extremes(pt){
+    var x_ranges = [
+      0.25, 0.75, 1.0
+    ],//0-0.25, 0.25-0.75, 0.75-1.0
+      valid_values = [
+        [0.0,1.0],
+        [0,1.0],
+        [0.0,1.0]
+      ];
+    
+    return [pt[0], pt[1], 
+            custom_dist_curve(pt[0]/WIDTH,x_ranges,valid_values),
+            custom_dist_curve(pt[0]/WIDTH,x_ranges,valid_values)+0.05,
+           
+           ];
+  }
+  //related to the prob curve above
+  function custom_dist_curve(ind_var, ranges, values){
+    var left = 0,
+        dep_var = 0;
+    
+    ranges.some(function(el,i){
+      if(ind_var < el && ind_var >= left){
+        dep_var = Math.random()*(values[i][1]-values[i][0])+values[i][0];
+        return true;
+      } else {
+        left = el;
+        return false;
+      }
+    });
+    return dep_var;
+  }
+  
+  function with_roughness(pt){
+    //x,y,balance,offset
+    return [pt[0], pt[1], Math.random(), (Math.random()+0.05)];
+    //return roughness_rng_to_x_extremes(pt);
+  }
+  
+  function offset_midpoint_rough(pt1, pt2){
+    var mx = (pt1[0]+pt2[0])/2,
+        my = (pt1[1]+pt2[1])/2,
+        vx = -(pt1[1] - pt2[1]),
+        vy = (pt1[0] - pt2[0]),
+        bal = (pt1[2]+pt2[2])/2,
+        max_offset = (pt1[3]+pt2[3])/2,
+        d = max_offset * (Math.random()-bal);
+    return [
+      mx + d * vx,
+      my + d * vy,
+      bal,
+      max_offset
+    ]
+  }
+  
+  var renderer = (function(){
+    
+    var cached_pts = [];
+    
+    function draw_on_canvas(pts){
+      cnv_ctxt.resetTransform();
+      cnv_ctxt.fillStyle = options.ocean_color;
+      cnv_ctxt.fillRect(0,0,WIDTH,HEIGHT);
+
+      cnv_ctxt.translate(WIDTH/2,HEIGHT/2);
+
+      cnv_ctxt.fillStyle = options.land_color;
+      cnv_ctxt.beginPath();
+      cnv_ctxt.moveTo(pts[0][0],pts[0][1]);
+      for(var i=1;i<pts.length;i++){
+        cnv_ctxt.lineTo(pts[i][0],pts[i][1]);
+      }
+      cnv_ctxt.closePath();
+      cnv_ctxt.fill("evenodd");
+    }
+    
+    return {
+      draw:function(pts){
+        cached_pts = pts;
+        draw_on_canvas(pts);
+      },
+      redraw:function(cb){
+        if(cb){
+          draw_on_canvas(cached_pts.map(cb));
+        } else {
+          draw_on_canvas(cached_pts);
+        }
+          
+      }
+    }
+  })();
+ 
+    
+  </script>
+  <script>
+  window.onload = function(){
+    
+    //handle resizing canvas and stuff
+    if(window.innerHeight > 900){
+      if(window.outerHeight / window.outerWidth >= 1.6){
+        //decent AR and decent size,
+        //get height of canvas to be innerHeight - (text_content.height + 20(padding))
+        var text_content_height = document.getElementById("text_content").getBoundingClientRect().height;
+        var height_left = window.innerHeight - (text_content_height + 20);
+        var canv = document.getElementById("main");
+        canv.width = height_left;
+        canv.height = height_left;
+        window.HEIGHT = height_left;
+        window.WIDTH = height_left;
+        canv.style.height = height_left;
+        canv.style.width = height_left;
+      }
+    }
+    
+    
+    if(window.location.hash==""){
+      options.randomize();
+    }
+    hashController.initialize();
+    Math.seedrandom(hashController.get("seed"));
+    
+    console.dir(options);
+    var opt = options;
+    hashController.for_each_field(function(field,val,type){
+      if(type=='n')
+        val = parseFloat(val,10);
+      //console.log("options["+field+"]="+val);
+      opt[field] = val;
+      //console.log(options[field])
+    });
+    console.dir(options);
+    ex_rough();
+    
+    var gui  = new dat.GUI();
+    var guiControllers = [];
+    console.log(options);
+    guiControllers.push(
+      gui.add(options,'radius')
+        .min(options._radius_min)
+        .max(options._radius_max)
+        .step(5),
+      gui.add(options,'sides')
+        .min(options._sides_min)
+        .max(options._sides_max)
+        .step(1),
+      gui.add(options,'min_dist')
+        .min(options._min_dist_min)
+        .max(options._min_dist_max)
+        .step(0.1),
+      
+      gui.addColor(options,'land_color'),
+      gui.addColor(options,'ocean_color')
+    );
+    guiControllers.forEach(function(e){
+      e.onFinishChange(function(v){
+        hashController.update(e.property,v);
+        options.redraw();
+        
+      });
+    });
+    gui.add(options,'randomize');
+    gui.add(options,'reset_view');
+    
+    window.onhashchange = function(){
+      hashController.load_url();
+      options.redraw();
+      
+    }
+    
+    
+    
+  };
+    
+    
+    
+    
+    
+  
+  </script>
+</html>
