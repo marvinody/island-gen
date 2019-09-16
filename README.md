@@ -11,3 +11,5 @@ I wrote this sometime around January 2017 according to my server's logs. I did n
 Not keeping your code because you didn't know what you were writing back then seems wrong to me and I would like to save my growth (even though a lot of it is lost) as much as I can. It also is definitely one of the better looking sites I made and it's almost completely vanilla JS with just one dependency that manages settings change.
 
 In this project, apparently I made like a hash router kinda deal from React from scratch which is frickin' amazing for me. This is why I love coding. You come up with a solution to something in a way that seems fitting at the time, then several years later, you find that the solution you came up with is ACTUALLY a solution that the smartest minds in the front-end world also came up with.
+
+[original-island-gen]: http://exupero.org/hazard/post/islands/
